@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ovládání relé</title>
+<style>
+:root{--bg:#f3f4f6;--card:#fff;--tx:#1d2330;--mut:#6b7280;--bd:#e2e5ea;--ok:#15803d;--okb:#dcfce7;--er:#b91c1c;--erb:#fee2e2;--wa:#92400e;--wab:#fef3c7;--ac:#2563eb}
+@media(prefers-color-scheme:dark){:root{--bg:#101318;--card:#1a1f26;--tx:#e6e8eb;--mut:#9aa3ae;--bd:#2b323c;--ok:#4ade80;--okb:#12301d;--er:#f87171;--erb:#3a1616;--wa:#fbbf24;--wab:#3a2d0c;--ac:#3b82f6}}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--tx)}
+header{max-width:920px;margin:auto;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+h1{font-size:18px;margin:0}
+.conn{font-size:13px;color:var(--mut);display:flex;align-items:center;gap:6px}
+.dot{width:9px;height:9px;border-radius:50%;background:#9ca3af}
+.dot.on{background:var(--ok)}.dot.off{background:var(--er)}
+main{max-width:920px;margin:auto;padding:0 16px 24px;display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(290px,1fr))}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px}
+.card h2{margin:0 0 12px;font-size:16px}
+.full{grid-column:1/-1}
+.pulse{width:100%;padding:18px;font-size:17px;font-weight:600;border:0;border-radius:10px;background:var(--ac);color:#fff;cursor:pointer}
+.pulse:disabled{opacity:.5;cursor:default}
+.ind{display:flex;gap:8px;margin:12px 0 8px;flex-wrap:wrap}
+.pill{font-size:12px;padding:3px 10px;border-radius:99px;border:1px solid var(--bd);color:var(--mut)}
+.pill.on{background:var(--okb);color:var(--ok);border-color:transparent}
+.pill.warn{background:var(--wab);color:var(--wa);border-color:transparent}
+.res{padding:9px 11px;border-radius:8px;font-size:14px;background:var(--bg)}
+.res.ok{background:var(--okb);color:var(--ok)}.res.err{background:var(--erb);color:var(--er);font-weight:600}.res.pend{background:var(--wab);color:var(--wa)}
+.res small{display:block;color:var(--mut);font-size:12px;font-weight:400;margin-top:2px}
+fieldset{border:1px solid var(--bd);border-radius:8px;margin:12px 0 0;padding:10px}
+legend{font-size:13px;color:var(--mut);padding:0 4px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.row+.row{margin-top:8px}
+input,select{font:inherit;padding:6px 8px;border:1px solid var(--bd);border-radius:6px;background:var(--card);color:var(--tx)}
+input[type=number]{width:84px}
+input.w{flex:1;min-width:180px}
+label{display:flex;align-items:center;gap:5px}
+button.s{font:inherit;padding:6px 12px;border-radius:6px;border:1px solid var(--bd);background:var(--card);color:var(--tx);cursor:pointer}
+button.p{background:var(--ac);color:#fff;border-color:var(--ac)}
+.cd{font-size:13px;color:var(--mut);margin-top:6px}
+.cd.act{color:var(--ok)}
+.log{font:12px/1.6 ui-monospace,Consolas,monospace;color:var(--mut);white-space:pre-wrap;margin:0}
+#toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#111827;color:#fff;padding:8px 14px;border-radius:8px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none}
+#toast.show{opacity:.95}
+.hint{font-size:13px;color:var(--mut);margin:6px 0 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>Ovládání relé</h1>
+  <div class="conn"><span class="dot" id="dot"></span><span id="conn">Připojuji…</span></div>
+</header>
+<main id="main">
+  <section class="card full" id="setup" hidden>
+    <h2>Vzdálené připojení (MQTT)</h2>
+    <div class="row"><input class="w" id="mHost" placeholder="g61f1f84.ala.eu-central-1.emqxsl.com" value="g61f1f84.ala.eu-central-1.emqxsl.com"></div>
+    <div class="row"><input class="w" id="mUser" placeholder="uživatel" autocomplete="username"><input class="w" id="mPass" type="password" placeholder="heslo" autocomplete="current-password"></div>
+    <div class="row"><input class="w" id="mDev" placeholder="DEVICE_ID" value="rele-nodemcu"><label><input type="checkbox" id="mSave" checked> zapamatovat</label><button class="s p" onclick="mqttConnect()">Připojit</button></div>
+    <p class="hint">Údaje se ukládají jen v tomto prohlížeči. Port WebSocket 8084 se doplní automaticky (lze zadat host:port).</p>
+  </section>
+</main>
+<div id="toast"></div>
+<script>
+const N = 2;
+const $ = s => document.querySelector(s);
+let S = null, rxAt = 0, mode = '', devOnline = false, linkUp = false, client = null, dev = '';
+const formInit = [false, false];
+
+function sget(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
+function sset(k,v){ try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k,v); } catch(e){} }
+function toast(t){ const el=$('#toast'); el.textContent=t; el.classList.add('show'); clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('show'),2200); }
+const p2 = n => String(n).padStart(2,'0');
+function fmtDur(s){ s=Math.max(0,Math.round(s)); const d=Math.floor(s/86400), h=Math.floor(s%86400/3600), m=Math.floor(s%3600/60), x=s%60;
+  return (d? d+' d ':'') + (d||h? h+':'+p2(m):m) + ':' + p2(x); }
+function fmtTime(t){ if(!t) return ''; const d=new Date(t*1000); return d.toLocaleDateString('cs-CZ',{day:'numeric',month:'numeric'})+' '+d.toLocaleTimeString('cs-CZ'); }
+
+function build(){
+  const main = $('#main');
+  for (let i=0;i<N;i++) main.insertAdjacentHTML('beforeend', `
+  <section class="card">
+    <h2 id="n${i}">Relé ${i+1}</h2>
+    <button class="pulse" id="b${i}" onclick="cmd({cmd:'pulse',r:${i}})" disabled>Sepnout na 3 s</button>
+    <div class="ind"><span class="pill" id="o${i}">Výstup: vypnuto</span><span class="pill" id="f${i}">Zpětná vazba: ne</span></div>
+    <div class="res" id="r${i}">—</div>
+    <fieldset><legend>Sepnout po uplynutí času</legend>
+      <div class="row">Za <input type="number" id="iv${i}" min="1" value="60">
+        <select id="iu${i}"><option value="1">s</option><option value="60" selected>min</option><option value="3600">h</option></select>
+        <label><input type="checkbox" id="ir${i}"> opakovat</label></div>
+      <div class="row"><button class="s p" onclick="setInt(${i})">Spustit</button><button class="s" onclick="cmd({cmd:'interval_off',r:${i}})">Zrušit</button></div>
+      <div class="cd" id="c${i}">Neaktivní</div>
+    </fieldset>
+    <fieldset><legend>Denně v čase</legend>
+      <div class="row"><input type="time" id="dt${i}" value="06:00"><label><input type="checkbox" id="de${i}"> zapnuto</label><button class="s p" onclick="setDaily(${i})">Uložit</button></div>
+      <div class="cd" id="dc${i}">Vypnuto</div>
+    </fieldset>
+  </section>`);
+  main.insertAdjacentHTML('beforeend', `<section class="card full"><h2>Poslední události</h2><pre class="log" id="log">—</pre></section>`);
+}
+
+function setInt(i){
+  const sec = Math.round(parseFloat($('#iv'+i).value) * +$('#iu'+i).value);
+  if (!(sec >= 5)) return toast('Minimum je 5 s');
+  cmd({cmd:'interval', r:i, sec, rep:$('#ir'+i).checked});
+}
+function setDaily(i){
+  const v = $('#dt'+i).value; if(!v) return toast('Zadej čas');
+  const [h,m] = v.split(':').map(Number);
+  cmd({cmd:'daily', r:i, on:$('#de'+i).checked, h, m});
+}
+
+async function cmd(o){
+  if (mode === 'local') {
+    try {
+      const r = await fetch('api/cmd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});
+      const j = await r.json(); toast(j.msg); poll();
+    } catch(e){ toast('Chyba spojení se zařízením'); }
+  } else if (client && client.connected) {
+    if (!devOnline) toast('Pozor: zařízení je offline');
+    client.publish(dev+'/cmd', JSON.stringify(o), {qos:1}, err => toast(err ? 'Odeslání selhalo' : 'Odesláno'));
+  } else toast('Nepřipojeno');
+}
+
+function onState(j){ S = j; rxAt = Date.now(); render(); }
+
+function render(){
+  const online = mode==='local' ? linkUp : (linkUp && devOnline);
+  $('#dot').className = 'dot ' + (online ? 'on' : (mode ? 'off' : ''));
+  $('#conn').textContent = mode==='local' ? (linkUp ? 'Lokálně · zařízení online' : 'Lokálně · zařízení nedostupné')
+    : mode==='mqtt' ? (!linkUp ? 'Vzdáleně · nepřipojeno k brokeru' : devOnline ? 'Vzdáleně · zařízení online' : 'Vzdáleně · zařízení OFFLINE') : 'Připojuji…';
+  if (!S) return;
+  const el = S.t ? Math.max(0, Date.now()/1000 - S.t) : (Date.now()-rxAt)/1000;
+  S.r.forEach((r,i) => {
+    $('#n'+i).textContent = r.n;
+    const b = $('#b'+i);
+    b.disabled = r.busy || !online;
+    b.textContent = r.out ? 'Sepnuto…' : r.busy ? 'Kontroluji rozepnutí…' : 'Sepnout na ' + (S.pulse/1000) + ' s';
+    const o = $('#o'+i); o.className = 'pill' + (r.out ? ' on' : ''); o.textContent = 'Výstup: ' + (r.out ? 'SEPNUTO' : 'vypnuto');
+    const f = $('#f'+i);
+    if (r.fb && !r.busy) { f.className='pill warn'; f.textContent='Zpětná vazba aktivní bez povelu!'; }
+    else { f.className='pill' + (r.fb ? ' on' : ''); f.textContent = 'Zpětná vazba: ' + (r.fb ? 'ANO' : 'ne'); }
+    const re = $('#r'+i);
+    re.className = 'res ' + ({1:'pend',2:'ok',3:'err'}[r.rc] || '');
+    re.innerHTML = '';
+    re.append(r.res);
+    if (r.rt || r.src) { const sm=document.createElement('small'); sm.textContent=[fmtTime(r.rt), r.src].filter(Boolean).join(' · '); re.append(sm); }
+    const c = $('#c'+i);
+    if (r.iOn) { c.className='cd act'; c.textContent = 'Sepne za ' + fmtDur(r.next - el) + (r.rep ? ' · pak každých ' + fmtDur(r.iSec) : ' · jednorázově'); }
+    else { c.className='cd'; c.textContent = 'Neaktivní'; }
+    const dc = $('#dc'+i), tt = p2(r.dh)+':'+p2(r.dm);
+    dc.className = 'cd' + (r.dOn ? ' act' : '');
+    dc.textContent = r.dOn ? 'Sepne každý den v ' + tt + (S.t ? '' : ' (čekám na čas ze sítě)') : 'Vypnuto';
+    if (!formInit[i]) {
+      formInit[i] = true;
+      const s = r.iSec, u = s % 3600 === 0 ? 3600 : s % 60 === 0 ? 60 : 1;
+      $('#iv'+i).value = s / u; $('#iu'+i).value = u; $('#ir'+i).checked = !!r.rep;
+      $('#dt'+i).value = tt; $('#de'+i).checked = !!r.dOn;
+    }
+  });
+  $('#log').textContent = (S.log && S.log.length) ? S.log.join('\n') : '—';
+}
+
+// ---- lokální režim (stránka servírovaná z NodeMCU) ----
+async function poll(){
+  try { const r = await fetch('api/state',{cache:'no-store'}); if(!r.ok) throw 0; linkUp = true; onState(await r.json()); }
+  catch(e){ linkUp = false; render(); }
+}
+
+// ---- vzdálený režim (MQTT přes WebSocket) ----
+function loadLib(){ return new Promise((ok,ko)=>{ if(window.mqtt) return ok();
+  const s=document.createElement('script'); s.src='https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js'; s.onload=ok; s.onerror=ko; document.head.append(s); }); }
+
+async function mqttConnect(){
+  const host = $('#mHost').value.trim(), user = $('#mUser').value.trim(), pass = $('#mPass').value;
+  dev = $('#mDev').value.trim() || 'rele-nodemcu';
+  if (!host) return toast('Zadej host brokeru');
+  if ($('#mSave').checked) sset('rele_mqtt', JSON.stringify({host,user,pass,dev})); else sset('rele_mqtt', null);
+  try { await loadLib(); } catch(e){ return toast('Nelze načíst knihovnu MQTT (internet?)'); }
+  if (client) client.end(true);
+  const url = 'wss://' + (host.includes(':') ? host : host + ':8084') + '/mqtt';
+  client = mqtt.connect(url, {username:user, password:pass, clientId:'web-'+Math.random().toString(16).slice(2,10), reconnectPeriod:3000, connectTimeout:8000});
+  client.on('connect', () => { linkUp = true; $('#setup').hidden = true; client.subscribe([dev+'/state', dev+'/status'], {qos:1}); render(); });
+  client.on('close', () => { linkUp = false; render(); });
+  client.on('error', e => toast('MQTT: ' + e.message));
+  client.on('message', (t, m) => {
+    m = m.toString();
+    if (t.endsWith('/status')) { devOnline = m === 'online'; render(); }
+    else { try { onState(JSON.parse(m)); } catch(e){} }
+  });
+}
+
+build();
+setInterval(render, 500);
+(async () => {
+  if (location.protocol.startsWith('http')) {
+    try {
+      const r = await fetch('api/state', {cache:'no-store'});
+      if (r.ok && (r.headers.get('content-type')||'').includes('json')) {
+        mode = 'local'; linkUp = true; onState(await r.json()); setInterval(poll, 1000); return;
+      }
+    } catch(e){}
+  }
+  mode = 'mqtt';
+  $('#setup').hidden = false;
+  const saved = sget('rele_mqtt');
+  if (saved) { try { const c = JSON.parse(saved); $('#mHost').value=c.host; $('#mUser').value=c.user; $('#mPass').value=c.pass; $('#mDev').value=c.dev; mqttConnect(); } catch(e){} }
+  render();
+})();
+</script>
+</body>
+</html>

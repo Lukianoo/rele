@@ -131,7 +131,7 @@ function render(){
   if (!S) return;
   const el = S.t ? Math.max(0, Date.now()/1000 - S.t) : (Date.now()-rxAt)/1000;
   S.r.forEach((r,i) => {
-    $('#n'+i).textContent = r.n;
+   // $('#n'+i).textContent = r.n;
     const b = $('#b'+i);
     b.disabled = r.busy || !online;
     b.textContent = r.out ? 'Sepnuto…' : r.busy ? 'Kontroluji rozepnutí…' : 'Sepnout na ' + (S.pulse/1000) + ' s';

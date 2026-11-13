@@ -78,7 +78,8 @@ function build(){
   const main = $('#main');
   for (let i=0;i<N;i++) main.insertAdjacentHTML('beforeend', `
   <section class="card">
-    <h2 id="n${i}">Relé ${i+1}</h2>
+    <h2 id="n${i}">${['T', 'L'][i]}</h2>
+
     <button class="pulse" id="b${i}" onclick="cmd({cmd:'pulse',r:${i}})" disabled>Sepnout na 3 s</button>
     <div class="ind"><span class="pill" id="o${i}">Výstup: vypnuto</span><span class="pill" id="f${i}">Zpětná vazba: ne</span></div>
     <div class="res" id="r${i}">—</div>
